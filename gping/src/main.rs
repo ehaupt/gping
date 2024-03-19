@@ -30,6 +30,7 @@ use tui::style::{Color, Style};
 use tui::text::Span;
 use tui::widgets::{Axis, Block, Borders, Chart, Dataset};
 use tui::Terminal;
+use users::get_current_uid;
 
 mod colors;
 mod plot_data;
@@ -274,7 +275,7 @@ fn start_cmd_thread(
         .to_string();
     let cmd_args = words.map(|w| w.to_string()).collect::<Vec<String>>();
 
-    let interval = Duration::from_millis((watch_interval.unwrap_or(0.5) * 1000.0) as u64);
+    let interval = get_secure_interval(watch_interval);
 
     // Pump cmd watches into the queue
     thread::spawn(move || -> Result<()> {
@@ -307,7 +308,7 @@ fn start_ping_thread(
     kill_event: Arc<AtomicBool>,
     interface: Option<String>,
 ) -> Result<JoinHandle<Result<()>>> {
-    let interval = Duration::from_millis((watch_interval.unwrap_or(0.2) * 1000.0) as u64);
+    let interval = get_secure_interval(watch_interval);
     // Pump ping messages into the queue
     let stream = ping_with_interval(host, interval, interface)?;
     Ok(thread::spawn(move || -> Result<()> {
@@ -324,6 +325,24 @@ fn start_ping_thread(
         }
         Ok(())
     }))
+}
+
+fn get_secure_interval(watch_interval: Option<f32>) -> Duration {
+    // Default intervals
+    let default_interval_for_root = 0.5f64;
+    let default_interval_for_others = 1.0f64;
+
+    // Check if the current user is root
+    let is_root = get_current_uid() == 0;
+
+    // Determine the minimum interval based on user privileges
+    let min_interval = if is_root { default_interval_for_root } else { default_interval_for_others };
+
+    // If watch_interval is specified, use it if it's greater than the minimum; otherwise, use the minimum
+    // Convert f32 to f64 for comparison and calculations
+    let adjusted_interval = watch_interval.map_or(min_interval, |val| val as f64).max(min_interval);
+
+    Duration::from_millis((adjusted_interval * 1000.0) as u64)
 }
 
 fn get_host_ipaddr(host: &str, force_ipv4: bool, force_ipv6: bool) -> Result<String> {
